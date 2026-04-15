@@ -30,7 +30,7 @@ close all
 %% Initialize
 
 % initialize eeglab 
-addpath('/Users/fsmits2/Downloads/eeglab2024.2') % AANPASSEN NAAR LOKALE PAD NAAR EEGLAB
+addpath('/Users/yalbers/Documents/MATLAB/eeglab2025.1.0') % AANPASSEN NAAR LOKALE PAD NAAR EEGLAB
 [ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab; 
 
 
@@ -38,26 +38,25 @@ addpath('/Users/fsmits2/Downloads/eeglab2024.2') % AANPASSEN NAAR LOKALE PAD NAA
 %% Set paths and subject IDs
 
 % find path name to research folder structure (RFS)
-path2RFS = '/Users/fsmits2/Networkshares/Her/onderzoeksarchief/22-000_PITA_BS/E_ResearchData/2_ResearchData/'; % ENTER YOUR PATH TO RFS. End with slash ('/' on Mac, '\' on Windows)
+path2RFS = 'L:/onderzoeksarchief/22-000_PITA_BS/E_ResearchData/2023_BRAINPOWER/3_raw_data/2_Research data/'; % ENTER YOUR PATH TO RFS. End with slash ('/' on Mac, '\' on Windows)
 
 % set other paths 
-path2data    = [path2RFS 'Data EEG/0 raw EEG data/'];
-path2EEGsets = [path2RFS 'Data EEG/1 preprocessed EEG data/'];
-path2save    = [path2RFS 'Data EEG/1 preprocessed EEG data/'];
+path2data    = [path2RFS '4_EEG data/'];
+path2EEGsets = [path2RFS '5_EEG sets/'];
+path2save    = [path2RFS '6_Preproc EEG data/'];
 
 % enter subject names
-subj_list =[669	557 363	638	989	383	502	733	442	575	710	262 ...
-            752 227	565	362	600	121	319 923	915	298	202	692	275	...
-            508 291	803	755	681	876	134	559	818	601	524	883	193	642];
+subj_list =[135	192 203	218	252	298	315	316	323	353	362	372 ...
+            385 404	455	468	505	537	547 576	583	637	674	705	758	...
+            763 775	847	867	922	968 996	];
 sessions  = [1 2];
 
 % enter filenames
 rec1 = 'restingstate-pretACS-';
-rec2 = 'Encoding-';
-rec3 = 'TACSEEG-';
-rec4 = 'restingstate-posttACS-';
-rec5 = 'Retrieval-';
-file_type = {rec1, rec2, rec3, rec4, rec5};
+rec2 = 'eFRT_encoding_';
+rec3 = 'restingstate_posttACS-';
+rec4 = 'eFRT_retrieval-';
+file_type = {rec1, rec2, rec3, rec4};
 
 % % --- EEG trigger codebook: ---
 % % Original trigger codes
@@ -103,7 +102,7 @@ file_type = {rec1, rec2, rec3, rec4, rec5};
 fileno = 2;
 
 % ~~~~ VOOR 1 DATASET (voorbeeld): ~~~~~ 
-subjectID_n1 = 524;
+subjectID_n1 = 505;
 session_n1   = 1;
 name_of_set  = sprintf('%s%i-%i.bdf', file_type{fileno}, subjectID_n1, session_n1);
 fileName     = fullfile(path2data, name_of_set);
@@ -113,7 +112,7 @@ EEG = pop_biosig( fileName ); % REQUIRES BIOSIG EXTENSION
 
 % -- Enter data to the EEG structure
 EEG.filename = fileName;
-EEG.setname  = fileName;
+EEG.setname  = name_of_set;
 EEG.subject  = subjectID_n1;
 EEG.session  = session_n1;
 
@@ -122,14 +121,18 @@ EEG = pop_select(EEG, 'nochannel', {'F3', 'F4', 'EXG7', 'EXG8'});
 
 % -- Re-code events [Why? BioSemi/Computer settings resulted in changes in the recorded trigger codes relative to the originally programmed triggers codes. These changes are unfortunately not exactly the same across subjects.]
 % remove added trigger text like 'condition' and 'artifact'
+for fi = 1:length(EEG.event)
+    EEG.event(fi).type = string(EEG.event(fi).type);
+end
+
 for ev_i = 1:length({EEG.event.type})
     EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'condition ', '' );
     EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'artifact', '' );
 end
 
 % remove trigger 256
-trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
-EEG      = pop_editeventvals(EEG,'delete', trig_256);
+%trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
+%EEG      = pop_editeventvals(EEG,'delete', trig_256);
 
 % Re-reference to avg mastoids
 mastoid1 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG5' ));
@@ -144,8 +147,8 @@ EEG      = pop_resample( EEG, 256); % Downsample the data from 2048 to 256 Hz
 [EEG, com, b] = pop_eegfiltnew(EEG,'locutoff',0.5); 
 [EEG, com, b] = pop_eegfiltnew(EEG,'hicutoff',34);
 
-EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',  0.5, 'Design', 'butter', 'Filter', 'highpass', 'Order',  4 ); % Format: pop_basicfilter( EEG, chanArray, parameters )
-EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',   35, 'Design', 'butter', 'Filter',  'lowpass', 'Order',  4 ); % IIR Butterworth filters highpass 0.5 Hz, lowpass 35 Hz, filter order 4 (-24 dB rolloff).
+%EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',  0.5, 'Design', 'butter', 'Filter', 'highpass', 'Order',  4 ); % Format: pop_basicfilter( EEG, chanArray, parameters )
+%EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',   35, 'Design', 'butter', 'Filter',  'lowpass', 'Order',  4 ); % IIR Butterworth filters highpass 0.5 Hz, lowpass 35 Hz, filter order 4 (-24 dB rolloff).
 
 % Create eye channel bipolar signals
 EOG_ch   = find(strcmpi({EEG.chanlocs.labels},'EXG1')):find(strcmpi({EEG.chanlocs.labels},'EXG4')); % Find indices EOG electrodes (EXG1, EXG2, EXG3, EXG4) & EEG scalp electrodes
@@ -158,8 +161,8 @@ EEG.chanlocs( EOG_ch(2) ).labels = 'HEOG'; % EXG3 is now the bipolar HEOG channe
 
 % Save
 fprintf('\n****\nSave pre-processed subject %i session %i\n****\n\n', subjectID_n1, session_n1);
-SaveName = [file_type{fileno} num2str(subjectID_n1) '-' num2str(ssession_n1) '_PreprocEEG.set'];
-EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', Path2EEGsets );
+SaveName = [file_type{fileno} num2str(subjectID_n1) '-' num2str(session_n1) '_PreprocEEG.set'];
+EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', path2EEGsets );
 
 
 
@@ -171,14 +174,14 @@ for subj_i = 1:length(subj_list)
     for sess_i = 1:length(sessions)
 
         fprintf('\n****\nStart processing subject %i session %i\n****\n\n', subj_list(subj_i), sessions(sess_i));
-        fileName = fullfile(Path2EEGbdf, [file_type{fileno} num2str(subj_list(subj_i)) '-' num2str(sess_i) '.bdf']);
+        fileName = fullfile(path2data, [file_type{fileno} num2str(subj_list(subj_i)) '-' num2str(sess_i) '.bdf']);
 
         % -- Load raw bdf data file via EEGlab
         EEG = pop_biosig( fileName );
 
         % -- Enter data to the EEG structure
         EEG.filename = fileName;
-        EEG.setname  = fileName;
+        EEG.setname  = name_of_set;
         EEG.subject  = subj_list(subj_i);
         EEG.session  = sess_i;
 
@@ -187,24 +190,30 @@ for subj_i = 1:length(subj_list)
 
         % -- Re-code events [Why? BioSemi/Computer settings resulted in changes in the recorded trigger codes relative to the originally programmed triggers codes. These changes are unfortunately not exactly the same across subjects.]
         % remove added trigger text like 'condition' and 'artifact'
+        for fi = 1:length(EEG.event)
+            EEG.event(fi).type = string(EEG.event(fi).type);
+        end
+
         for ev_i = 1:length({EEG.event.type})
             EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'condition ', '' );
             EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'artifact', '' );
         end
 
         % remove trigger 256
-        trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
-        EEG = pop_editeventvals(EEG,'delete', trig_256);
+        %trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
+        %EEG = pop_editeventvals(EEG,'delete', trig_256);
 
-            % Re-reference to avg mastoids
+        % Re-reference to avg mastoids
         mastoid1 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG5' ));
         mastoid2 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG6' ));
         EEG      = pop_reref( EEG, [mastoid1 mastoid2]); %re-references to the average of 2 channels
 
         % Downsample & Filter
         EEG      = pop_resample( EEG, 256); % Downsample the data from 2048 to 256 Hz
-        EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',  0.5, 'Design', 'butter', 'Filter', 'highpass', 'Order',  4 ); % Format: pop_basicfilter( EEG, chanArray, parameters )
-        EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',   35, 'Design', 'butter', 'Filter',  'lowpass', 'Order',  4 ); % IIR Butterworth filters highpass 0.5 Hz, lowpass 35 Hz, filter order 4 (-24 dB rolloff).
+        [EEG, com, b] = pop_eegfiltnew(EEG,'locutoff',0.5); 
+        [EEG, com, b] = pop_eegfiltnew(EEG,'hicutoff',34);
+        %EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',  0.5, 'Design', 'butter', 'Filter', 'highpass', 'Order',  4 ); % Format: pop_basicfilter( EEG, chanArray, parameters )
+        %EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',   35, 'Design', 'butter', 'Filter',  'lowpass', 'Order',  4 ); % IIR Butterworth filters highpass 0.5 Hz, lowpass 35 Hz, filter order 4 (-24 dB rolloff).
 
         % Create eye channel bipolar signals
         EOG_ch   = find(strcmpi({EEG.chanlocs.labels},'EXG1')):find(strcmpi({EEG.chanlocs.labels},'EXG4')); % Find indices EOG electrodes (EXG1, EXG2, EXG3, EXG4) & EEG scalp electrodes
@@ -218,7 +227,7 @@ for subj_i = 1:length(subj_list)
         % Save
         fprintf('\n****\nSave pre-processed subject %i session %i\n****\n\n', subj_list(subj_i), sessions(sess_i));
         SaveName = [file_type{fileno} num2str(subj_list(subj_i)) '-' num2str(sess_i) '_PreprocEEG.set'];
-        EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', Path2EEGsets );
+        EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', path2EEGsets );
 
         clear EEG
         ALLEEG(1:end) = [];
