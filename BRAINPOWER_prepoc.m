@@ -169,68 +169,93 @@ EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', path2EEGsets );
 
 % ~~~~~ HERHALING IN LOOP: ~~~~~
 
+error_count = 0;
+error_files = {};
+
 % Loop over files
 for subj_i = 1:length(subj_list)
     for sess_i = 1:length(sessions)
 
         fprintf('\n****\nStart processing subject %i session %i\n****\n\n', subj_list(subj_i), sessions(sess_i));
         fileName = fullfile(path2data, [file_type{fileno} num2str(subj_list(subj_i)) '-' num2str(sess_i) '.bdf']);
+        
+        try
 
-        % -- Load raw bdf data file via EEGlab
-        EEG = pop_biosig( fileName );
+            % -- Load raw bdf data file via EEGlab
+            EEG = pop_biosig( fileName );
 
-        % -- Enter data to the EEG structure
-        EEG.filename = fileName;
-        EEG.setname  = name_of_set;
-        EEG.subject  = subj_list(subj_i);
-        EEG.session  = sess_i;
+             % -- Enter data to the EEG structure
+            EEG.filename = fileName;
+            EEG.setname  = name_of_set;
+            EEG.subject  = subj_list(subj_i);
+            EEG.session  = sess_i;
 
-        % -- Remove non-recorded channels: F3 F4 (tACS electrode locations) and EXG7 EXG8
-        EEG = pop_select(EEG, 'nochannel', {'F3', 'F4', 'EXG7', 'EXG8'});
+            % -- Remove non-recorded channels: F3 F4 (tACS electrode locations) and EXG7 EXG8
+            EEG = pop_select(EEG, 'nochannel', {'F3', 'F4', 'EXG7', 'EXG8'});
 
-        % -- Re-code events [Why? BioSemi/Computer settings resulted in changes in the recorded trigger codes relative to the originally programmed triggers codes. These changes are unfortunately not exactly the same across subjects.]
-        % remove added trigger text like 'condition' and 'artifact'
-        for fi = 1:length(EEG.event)
-            EEG.event(fi).type = string(EEG.event(fi).type);
+            % -- Re-code events [Why? BioSemi/Computer settings resulted in changes in the recorded trigger codes relative to the originally programmed triggers codes. These changes are unfortunately not exactly the same across subjects.]
+            % remove added trigger text like 'condition' and 'artifact'
+            for fi = 1:length(EEG.event)
+                EEG.event(fi).type = string(EEG.event(fi).type);
+            end
+
+            for ev_i = 1:length({EEG.event.type})
+                EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'condition ', '' );
+                EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'artifact', '' );
+            end
+
+            % remove trigger 256
+            %trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
+            %EEG = pop_editeventvals(EEG,'delete', trig_256);
+
+            % Re-reference to avg mastoids
+            mastoid1 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG5' ));
+            mastoid2 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG6' ));
+            EEG      = pop_reref( EEG, [mastoid1 mastoid2]); %re-references to the average of 2 channels
+
+            % Downsample & Filter
+            EEG      = pop_resample( EEG, 256); % Downsample the data from 2048 to 256 Hz
+            [EEG, com, b] = pop_eegfiltnew(EEG,'locutoff',0.5); 
+            [EEG, com, b] = pop_eegfiltnew(EEG,'hicutoff',34);
+            %EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',  0.5, 'Design', 'butter', 'Filter', 'highpass', 'Order',  4 ); % Format: pop_basicfilter( EEG, chanArray, parameters )
+            %EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',   35, 'Design', 'butter', 'Filter',  'lowpass', 'Order',  4 ); % IIR Butterworth filters highpass 0.5 Hz, lowpass 35 Hz, filter order 4 (-24 dB rolloff).
+
+            % Create eye channel bipolar signals
+            EOG_ch   = find(strcmpi({EEG.chanlocs.labels},'EXG1')):find(strcmpi({EEG.chanlocs.labels},'EXG4')); % Find indices EOG electrodes (EXG1, EXG2, EXG3, EXG4) & EEG scalp electrodes
+            EEG_ch   = 1:EOG_ch(1)-1;
+            EEG      = pop_reref(EEG, EOG_ch(2),'exclude',[EEG_ch, EOG_ch(3:4)] ); % For vertical eye movements: re-reference channel below left eye (EXG1) to channel above left eye (EXG2):
+            EOG_ch   = find(strcmpi( {EEG.chanlocs.labels},'EXG1')):find(strcmpi( {EEG.chanlocs.labels},'EXG4')); % Find indices EOG electrodes (EXG1, EXG2, EXG3, EXG4) & EEG scalp electrodes
+            EEG      = pop_reref(EEG, EOG_ch(2),'exclude',[EEG_ch, EOG_ch(1)] ); % For horizontal eye movements: re-reference channel next to left eye. (EXG3) to channel next to right eye (EXG4):
+            EEG.chanlocs( EOG_ch(1) ).labels = 'VEOG'; % EXG1 is now the bipolar VEOG channel. Change channel name.
+            EEG.chanlocs( EOG_ch(2) ).labels = 'HEOG'; % EXG3 is now the bipolar HEOG channel. Change channel name.
+
+            % Save
+            fprintf('\n****\nSave pre-processed subject %i session %i\n****\n\n', subj_list(subj_i), sessions(sess_i));
+            SaveName = [file_type{fileno} num2str(subj_list(subj_i)) '-' num2str(sess_i) '_PreprocEEG.set'];
+            EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', path2EEGsets );
+
+            clear EEG
+            ALLEEG(1:end) = [];
+
+        catch ME
+            error_count = error_count + 1;
+            error_files{end+1} = fileName;
+
+            fprintf('\n!!!!!!!! ERROR !!!!!!!!\n');
+            fprintf('Bestand: %s\n', fileName);
+            fprintf('Subject: %i | Session: %i\n', subj_list(subj_i), sess_i);
+            fprintf('Error message: %s\n', ME.message);
+            fprintf('!!!!!!!!!!!!!!!!!!!!!!!\n\n');
+
+            % Zorg dat EEG leeg is zodat volgende iteratie niet crasht
+            if exist('EEG','var')
+                clear EEG
+            end
+
+            ALLEEG(1:end) = [];
+
+            continue; % ga door met volgende file
         end
-
-        for ev_i = 1:length({EEG.event.type})
-            EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'condition ', '' );
-            EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'artifact', '' );
-        end
-
-        % remove trigger 256
-        %trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
-        %EEG = pop_editeventvals(EEG,'delete', trig_256);
-
-        % Re-reference to avg mastoids
-        mastoid1 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG5' ));
-        mastoid2 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG6' ));
-        EEG      = pop_reref( EEG, [mastoid1 mastoid2]); %re-references to the average of 2 channels
-
-        % Downsample & Filter
-        EEG      = pop_resample( EEG, 256); % Downsample the data from 2048 to 256 Hz
-        [EEG, com, b] = pop_eegfiltnew(EEG,'locutoff',0.5); 
-        [EEG, com, b] = pop_eegfiltnew(EEG,'hicutoff',34);
-        %EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',  0.5, 'Design', 'butter', 'Filter', 'highpass', 'Order',  4 ); % Format: pop_basicfilter( EEG, chanArray, parameters )
-        %EEG      = pop_basicfilter( EEG, 1:32 , 'Cutoff',   35, 'Design', 'butter', 'Filter',  'lowpass', 'Order',  4 ); % IIR Butterworth filters highpass 0.5 Hz, lowpass 35 Hz, filter order 4 (-24 dB rolloff).
-
-        % Create eye channel bipolar signals
-        EOG_ch   = find(strcmpi({EEG.chanlocs.labels},'EXG1')):find(strcmpi({EEG.chanlocs.labels},'EXG4')); % Find indices EOG electrodes (EXG1, EXG2, EXG3, EXG4) & EEG scalp electrodes
-        EEG_ch   = 1:EOG_ch(1)-1;
-        EEG      = pop_reref(EEG, EOG_ch(2),'exclude',[EEG_ch, EOG_ch(3:4)] ); % For vertical eye movements: re-reference channel below left eye (EXG1) to channel above left eye (EXG2):
-        EOG_ch   = find(strcmpi( {EEG.chanlocs.labels},'EXG1')):find(strcmpi( {EEG.chanlocs.labels},'EXG4')); % Find indices EOG electrodes (EXG1, EXG2, EXG3, EXG4) & EEG scalp electrodes
-        EEG      = pop_reref(EEG, EOG_ch(2),'exclude',[EEG_ch, EOG_ch(1)] ); % For horizontal eye movements: re-reference channel next to left eye. (EXG3) to channel next to right eye (EXG4):
-        EEG.chanlocs( EOG_ch(1) ).labels = 'VEOG'; % EXG1 is now the bipolar VEOG channel. Change channel name.
-        EEG.chanlocs( EOG_ch(2) ).labels = 'HEOG'; % EXG3 is now the bipolar HEOG channel. Change channel name.
-
-        % Save
-        fprintf('\n****\nSave pre-processed subject %i session %i\n****\n\n', subj_list(subj_i), sessions(sess_i));
-        SaveName = [file_type{fileno} num2str(subj_list(subj_i)) '-' num2str(sess_i) '_PreprocEEG.set'];
-        EEG = pop_saveset( EEG, 'filename',SaveName,'filepath', path2EEGsets );
-
-        clear EEG
-        ALLEEG(1:end) = [];
     end
 end
 
