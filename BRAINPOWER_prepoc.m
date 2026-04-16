@@ -102,8 +102,8 @@ file_type = {rec1, rec2, rec3, rec4};
 fileno = 2;
 
 % ~~~~ VOOR 1 DATASET (voorbeeld): ~~~~~ 
-subjectID_n1 = 505;
-session_n1   = 1;
+subjectID_n1 = 775;
+session_n1   = 2;
 name_of_set  = sprintf('%s%i-%i.bdf', file_type{fileno}, subjectID_n1, session_n1);
 fileName     = fullfile(path2data, name_of_set);
 
@@ -130,9 +130,13 @@ for ev_i = 1:length({EEG.event.type})
     EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'artifact', '' );
 end
 
-% remove trigger 256
-%trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
-%EEG      = pop_editeventvals(EEG,'delete', trig_256);
+% remove trigger 64769
+types = {EEG.event.type};
+
+trig_64768 = find(cellfun(@(x) contains(strtrim(x), '64768'), types));
+
+EEG = pop_editeventvals(EEG, 'delete', trig_64768);
+EEG = eeg_checkset(EEG);
 
 % Re-reference to avg mastoids
 mastoid1 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG5' ));
@@ -204,9 +208,13 @@ for subj_i = 1:length(subj_list)
                 EEG.event(ev_i).type = strrep( EEG.event(ev_i).type, 'artifact', '' );
             end
 
-            % remove trigger 256
-            %trig_256 = find(strcmpi( {EEG.event.type}, '256' ));
-            %EEG = pop_editeventvals(EEG,'delete', trig_256);
+            % remove trigger 64768
+            types = {EEG.event.type};
+
+            trig_64768 = find(cellfun(@(x) contains(strtrim(x), '64768'), types));
+
+            EEG = pop_editeventvals(EEG, 'delete', trig_64768);
+            EEG = eeg_checkset(EEG);
 
             % Re-reference to avg mastoids
             mastoid1 = find(strcmpi( {EEG.chanlocs.labels}, 'EXG5' ));
@@ -259,7 +267,110 @@ for subj_i = 1:length(subj_list)
     end
 end
 
+%% Event codes aanpassen
 
+files = dir(fullfile(path2EEGsets, '*sham*.set'));
+
+error_count = 0;
+error_files = {};
+
+for fi = 1:length(files)
+
+    try
+        fileName = files(fi).name;
+
+        fprintf('\nProcessing: %s\n', fileName);
+
+        EEG = pop_loadset('filename', fileName, 'filepath', files(fi).folder);
+
+        % --- recode events ---
+        for i = 1:length(EEG.event)
+
+            type = strtrim(string(EEG.event(i).type));
+
+            if type == "64792"
+                EEG.event(i).type = "64536";
+            elseif type == "64794"
+                EEG.event(i).type = "64538";
+            elseif type == "64791"
+                EEG.event(i).type = "64535";
+            elseif type == "64793"
+                EEG.event(i).type = "64537";
+            end
+
+        end
+
+        EEG = eeg_checkset(EEG);
+
+        % --- save ---
+        SaveName = strrep(fileName, '.set', '_recoded.set');
+
+        fprintf('Saving: %s\n', SaveName);
+
+        EEG = pop_saveset(EEG, ...
+            'filename', SaveName, ...
+            'filepath', files(fi).folder);
+
+        clear EEG
+
+    catch ME
+        error_count = error_count + 1;
+        error_files{end+1} = fileName;
+
+        fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
+
+        if exist('EEG','var')
+            clear EEG
+        end
+
+        continue;
+    end
+end
+
+% % Voor 1 bestand
+% fileName = 'eFRT_encoding_135-sham_PreprocEEG.set';
+% 
+% fullFile = fullfile(path2EEGsets, fileName);
+% 
+% fprintf('Loading: %s\n', fullFile);
+% 
+% % === LOAD ===
+% EEG = pop_loadset('filename', fileName, 'filepath', path2EEGsets);
+% 
+% % === RECODE EVENTS ===
+% for i = 1:length(EEG.event)
+% 
+%     type = strtrim(string(EEG.event(i).type));
+% 
+%     if type == "64792"
+%         EEG.event(i).type = "64536";
+% 
+%     elseif type == "64794"
+%         EEG.event(i).type = "64538";
+% 
+%     elseif type == "64791"
+%         EEG.event(i).type = "64535";
+% 
+%     elseif type == "64793"
+%         EEG.event(i).type = "64537";
+%     end
+% 
+% end
+% 
+% EEG = eeg_checkset(EEG);
+% 
+% fprintf('Recode done\n');
+% 
+% % === SAVE ===
+% SaveName = strrep(fileName, '.set', '_recoded.set');
+% 
+% fprintf('Saving to: %s\n', fullfile(path2EEGsets, SaveName));
+% 
+% EEG = pop_saveset(EEG, ...
+%     'filename', SaveName, ...
+%     'filepath', path2EEGsets);
+% 
+% fprintf('Save complete\n');
 %% Trim the data
 
 
