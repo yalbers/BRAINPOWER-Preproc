@@ -371,6 +371,172 @@ end
 %     'filepath', path2EEGsets);
 % 
 % fprintf('Save complete\n');
+
+%% Split 64535 in emo / neu (aparte run)
+
+% files = dir(fullfile(path2EEGsets, '*recoded.set'));
+% 
+% % Excel 1x laden
+% trialinfo_all = readtable('Opgeschoonde BP data.xlsx');
+% 
+% error_count = 0;
+% error_files = {};
+% 
+% for fi = 1:length(files)
+% 
+%     try
+%         fileName = files(fi).name;
+%         fprintf('\nProcessing: %s\n', fileName);
+% 
+%         EEG = pop_loadset('filename', fileName, 'filepath', files(fi).folder);
+% 
+%         % --- subject ID uit bestandsnaam halen ---
+%         tokens = regexp(fileName, '_(\d+)-', 'tokens');
+%         subID = str2double(tokens{1}{1});
+% 
+%         % --- filter trialinfo voor deze participant ---
+%         trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
+% 
+%         % --- vind alle 64535 events ---
+%         idx = find(strcmp({EEG.event.type}, '64535'));
+% 
+%         % --- check ---
+%         if length(idx) ~= height(trialinfo)
+%             error('Mismatch in aantal trials voor subject %d', subID);
+%         end
+% 
+%         % --- recode ---
+%         for k = 1:length(idx)
+% 
+%             cond = trialinfo.Trialtype_Emotion{k};
+% 
+%             if strcmpi(cond, 'Emo')
+%                 EEG.event(idx(k)).type = "64535_emo";
+%             elseif strcmpi(cond, 'Neu')
+%                 EEG.event(idx(k)).type = "64535_neu";
+%             end
+% 
+%         end
+% 
+%         EEG = eeg_checkset(EEG);
+% 
+%         % --- nieuwe bestandsnaam ---
+%         SaveName = strrep(fileName, '.set', '_emoNeu.set');
+% 
+%         fprintf('Saving: %s\n', SaveName);
+% 
+%         EEG = pop_saveset(EEG, ...
+%             'filename', SaveName, ...
+%             'filepath', files(fi).folder);
+% 
+%         clear EEG
+% 
+%     catch ME
+%         error_count = error_count + 1;
+%         error_files{end+1} = fileName;
+% 
+%         fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
+% 
+%         if exist('EEG','var')
+%             clear EEG
+%         end
+% 
+%         continue;
+%     end
+% end
+
+% TEST voor 1 bestand
+
+fileName = 'eFRT_encoding_775-sham_PreprocEEG_recoded.set';
+filePath = path2EEGsets;
+
+% --- laad EEG ---
+EEG = pop_loadset('filename', fileName, 'filepath', filePath);
+
+% --- laad Excel ---
+trialinfo_all = readtable('Opgeschoonde BP data.xlsx');
+
+% --- subject ID uit bestandsnaam halen ---
+tokens = regexp(fileName, '_(\d+)-', 'tokens');
+subID = str2double(tokens{1}{1});
+
+fprintf('Subject ID: %d\n', subID);
+
+% --- filter trialinfo ---
+trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
+
+% Duplicaties verwijderen
+
+types = {EEG.event.type};
+latencies = [EEG.event.latency];
+
+is64535 = strcmp(types, '64535');
+
+all_idx = find(is64535);
+lat_64535 = latencies(all_idx);
+
+% tolerantie (in samples) → pas aan indien nodig
+tol = 2;
+
+keep = true(size(lat_64535));
+
+for i = 2:length(lat_64535)
+    if abs(lat_64535(i) - lat_64535(i-1)) <= tol
+        keep(i) = false; % markeer als duplicaat
+    end
+end
+
+keep_idx = all_idx(keep);
+remove_idx = all_idx(~keep);
+
+fprintf('Verwijder %d dubbele events (met tolerantie)\n', length(remove_idx));
+
+EEG.event(remove_idx) = [];
+
+% --- check kolomnamen ---
+disp(trialinfo.Properties.VariableNames);
+
+% --- vind relevante events ---
+idx = find(strcmp({EEG.event.type}, '64535'));
+
+fprintf('Aantal 64535 events: %d\n', length(idx));
+fprintf('Aantal trials in Excel: %d\n', height(trialinfo));
+
+% --- check mismatch ---
+if length(idx) ~= height(trialinfo)
+    error('Mismatch tussen EEG events en Excel!');
+end
+
+% --- recode + print eerste paar als check ---
+for k = 1:length(idx)
+
+    cond = trialinfo.Trialtype_Emotion{k};
+
+    if strcmpi(cond, 'Emo')
+        newType = "64535_emo";
+    elseif strcmpi(cond, 'Neu')
+        newType = "64535_neu";
+    end
+
+    % print eerste 10 voor controle
+    if k <= 10
+        fprintf('Trial %d → %s\n', k, newType);
+    end
+
+    EEG.event(idx(k)).type = newType;
+
+end
+
+EEG = eeg_checkset(EEG);
+
+% --- opslaan testbestand ---
+SaveName = strrep(fileName, '.set', '_EmoNeu.set');
+
+EEG = pop_saveset(EEG, ...
+    'filename', SaveName, ...
+    'filepath', filePath);
+
+fprintf('\nTestbestand opgeslagen: %s\n', SaveName);
 %% Trim the data
 
 
