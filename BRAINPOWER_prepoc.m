@@ -3,7 +3,7 @@
 % --------------------------------------------------------------------- %
 %
 % Description:  Matlab-script to pre-process Biosemi EEG data
-%             - Study name: PITA (UU lab-study)
+%             - Study name: BRAINPOWER (UU lab-study)
 %             - Measure/instrument: Biosemi 32-EEG-channel recordings
 %             - Data type: EEG time series with trigger events (time stamps)
 %             - Design: within-subjects cross-over, 2 timepoints (sham vs. real 5Hz-tACS)
@@ -12,9 +12,7 @@
 % EEGLAB (used: version 2024.2)
 %
 % Notes: 
-% * Besluit > Excludeer ppn bij wie stimulatie niet is uitgevoerd tijdens real tACS sessie.
-%   Dat zijn ppn: 297, 334, 396, 602, 626, 913.
-%   Behoud ppn bij wie stimulatie niet is uitgevoerd in sham sessie.
+% * Alleen sham stimulatie gebruiken + pp 213 niet gebruiken --> 2x actieve stimulatie 
 %
 % Date:             April 2026
 % Matlab version:   2024b
@@ -372,171 +370,329 @@ end
 % 
 % fprintf('Save complete\n');
 
-%% Split 64535 in emo / neu (aparte run)
+%% Tellen en aanpassen van 64538, 64535, 64537 en het splitsen van 64535 in neu en emo
 
-% files = dir(fullfile(path2EEGsets, '*recoded.set'));
-% 
-% % Excel 1x laden
-% trialinfo_all = readtable('Opgeschoonde BP data.xlsx');
-% 
-% error_count = 0;
-% error_files = {};
-% 
-% for fi = 1:length(files)
-% 
-%     try
-%         fileName = files(fi).name;
-%         fprintf('\nProcessing: %s\n', fileName);
-% 
-%         EEG = pop_loadset('filename', fileName, 'filepath', files(fi).folder);
-% 
-%         % --- subject ID uit bestandsnaam halen ---
-%         tokens = regexp(fileName, '_(\d+)-', 'tokens');
-%         subID = str2double(tokens{1}{1});
-% 
-%         % --- filter trialinfo voor deze participant ---
-%         trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
-% 
-%         % --- vind alle 64535 events ---
-%         idx = find(strcmp({EEG.event.type}, '64535'));
-% 
-%         % --- check ---
-%         if length(idx) ~= height(trialinfo)
-%             error('Mismatch in aantal trials voor subject %d', subID);
-%         end
-% 
-%         % --- recode ---
-%         for k = 1:length(idx)
-% 
-%             cond = trialinfo.Trialtype_Emotion{k};
-% 
-%             if strcmpi(cond, 'Emo')
-%                 EEG.event(idx(k)).type = "64535_emo";
-%             elseif strcmpi(cond, 'Neu')
-%                 EEG.event(idx(k)).type = "64535_neu";
-%             end
-% 
-%         end
-% 
-%         EEG = eeg_checkset(EEG);
-% 
-%         % --- nieuwe bestandsnaam ---
-%         SaveName = strrep(fileName, '.set', '_emoNeu.set');
-% 
-%         fprintf('Saving: %s\n', SaveName);
-% 
-%         EEG = pop_saveset(EEG, ...
-%             'filename', SaveName, ...
-%             'filepath', files(fi).folder);
-% 
-%         clear EEG
-% 
-%     catch ME
-%         error_count = error_count + 1;
-%         error_files{end+1} = fileName;
-% 
-%         fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
-% 
-%         if exist('EEG','var')
-%             clear EEG
-%         end
-% 
-%         continue;
-%     end
-% end
+files = dir(fullfile(path2EEGsets, '*recoded.set'));
 
-% TEST voor 1 bestand
-
-fileName = 'eFRT_encoding_775-sham_PreprocEEG_recoded.set';
-filePath = path2EEGsets;
-
-% --- laad EEG ---
-EEG = pop_loadset('filename', fileName, 'filepath', filePath);
-
-% --- laad Excel ---
 trialinfo_all = readtable('Opgeschoonde BP data.xlsx');
 
-% --- subject ID uit bestandsnaam halen ---
-tokens = regexp(fileName, '_(\d+)-', 'tokens');
-subID = str2double(tokens{1}{1});
+error_count = 0;
+report = {};
 
-fprintf('Subject ID: %d\n', subID);
+for fi = 1:length(files)
 
-% --- filter trialinfo ---
-trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
+    try
+        fileName = files(fi).name;
+        fprintf('\nProcessing: %s\n', fileName);
 
-% Duplicaties verwijderen
+        EEG = pop_loadset('filename', fileName, 'filepath', files(fi).folder);
+        srate = EEG.srate;
 
-types = {EEG.event.type};
-latencies = [EEG.event.latency];
+        % --- subject ID ---
+        tokens = regexp(fileName, '_(\d+)-', 'tokens');
+        subID = str2double(tokens{1}{1});
 
-is64535 = strcmp(types, '64535');
+        trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
 
-all_idx = find(is64535);
-lat_64535 = latencies(all_idx);
+        %  DEDUPLICATIE (ALLE TRIGGERS)
 
-% tolerantie (in samples) → pas aan indien nodig
-tol = 2;
+        tol_dup = 2;
 
-keep = true(size(lat_64535));
+        for trig = ["64538","64535","64537"]
 
-for i = 2:length(lat_64535)
-    if abs(lat_64535(i) - lat_64535(i-1)) <= tol
-        keep(i) = false; % markeer als duplicaat
+            types = {EEG.event.type};
+            latencies = [EEG.event.latency];
+
+            isTrig = strcmp(types, trig);
+            idx_all = find(isTrig);
+            lat_trig = latencies(idx_all);
+
+            keep = true(size(lat_trig));
+
+            for i = 2:length(lat_trig)
+                if abs(lat_trig(i) - lat_trig(i-1)) <= tol_dup
+                    keep(i) = false;
+                end
+            end
+
+            EEG.event(idx_all(~keep)) = [];
+        end
+
+        % INITIËLE TELLING
+
+        types = string({EEG.event.type});
+        latencies = [EEG.event.latency];
+
+        n38 = sum(types == "64538");
+        n35 = sum(types == "64535");
+        n37 = sum(types == "64537");
+
+        fprintf('Na dedup: 38=%d | 35=%d | 37=%d\n', n38, n35, n37);
+
+        % EVENTS AANVULLEN
+
+        idx38 = find(types == "64538");
+        tol = 20;
+
+        for i = 1:length(idx38)
+
+            lat38 = latencies(idx38(i));
+            lat35 = lat38 + 0.5 * srate;
+            lat37 = lat35 + 0.8 * srate;
+
+            % --- 64535 ---
+            if n35 < 20
+                if ~any(abs(latencies - lat35) < tol)
+
+                    EEG.event(end+1).type = '64535';
+                    EEG.event(end).latency = lat35;
+
+                    latencies(end+1) = lat35;
+                    n35 = n35 + 1;
+                end
+            end
+
+            % --- 64537 ---
+            if n37 < 20
+                if ~any(abs(latencies - lat37) < tol)
+
+                    EEG.event(end+1).type = '64537';
+                    EEG.event(end).latency = lat37;
+
+                    latencies(end+1) = lat37;
+                    n37 = n37 + 1;
+                end
+            end
+
+        end
+
+        % --- sorteer events ---
+        [~, order] = sort([EEG.event.latency]);
+        EEG.event = EEG.event(order);
+
+        % EMO / NEU SPLIT
+
+        idx = find(strcmp({EEG.event.type}, '64535'));
+
+        if length(idx) ~= height(trialinfo)
+            error('Mismatch bij subject %d', subID);
+        end
+
+        for k = 1:length(idx)
+
+            cond = trialinfo.Trialtype_Emotion{k};
+
+            if strcmpi(cond, 'Emo')
+                EEG.event(idx(k)).type = "64535_emo";
+            else
+                EEG.event(idx(k)).type = "64535_neu";
+            end
+
+        end
+
+        EEG = eeg_checkset(EEG);
+
+        % EINDCHECK
+
+        types = string({EEG.event.type});
+
+        n38 = sum(types == "64538");
+        n35 = sum(contains(types, "64535"));
+        n37 = sum(types == "64537");
+
+        fprintf('Na alles: 38=%d | 35=%d | 37=%d\n', n38, n35, n37);
+
+        report{end+1,1} = fileName;
+        report{end,2} = n38;
+        report{end,3} = n35;
+        report{end,4} = n37;
+
+        % OPSLAAN
+
+        SaveName = strrep(fileName, '.set', '_final.set');
+
+        EEG = pop_saveset(EEG, ...
+            'filename', SaveName, ...
+            'filepath', files(fi).folder);
+
+        fprintf('Saved: %s\n', SaveName);
+
+        clear EEG
+
+    catch ME
+        error_count = error_count + 1;
+        fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
+        continue;
     end
 end
 
-keep_idx = all_idx(keep);
-remove_idx = all_idx(~keep);
+% RAPPORT
 
-fprintf('Verwijder %d dubbele events (met tolerantie)\n', length(remove_idx));
+fprintf('\n=== EINDRAPPORT ===\n');
 
-EEG.event(remove_idx) = [];
+for i = 1:size(report,1)
 
-% --- check kolomnamen ---
-disp(trialinfo.Properties.VariableNames);
+    f = report{i,1};
+    n38 = report{i,2};
+    n35 = report{i,3};
+    n37 = report{i,4};
 
-% --- vind relevante events ---
-idx = find(strcmp({EEG.event.type}, '64535'));
-
-fprintf('Aantal 64535 events: %d\n', length(idx));
-fprintf('Aantal trials in Excel: %d\n', height(trialinfo));
-
-% --- check mismatch ---
-if length(idx) ~= height(trialinfo)
-    error('Mismatch tussen EEG events en Excel!');
-end
-
-% --- recode + print eerste paar als check ---
-for k = 1:length(idx)
-
-    cond = trialinfo.Trialtype_Emotion{k};
-
-    if strcmpi(cond, 'Emo')
-        newType = "64535_emo";
-    elseif strcmpi(cond, 'Neu')
-        newType = "64535_neu";
+    if n38==20 && n35==20 && n37==20
+        fprintf('%s ✅ OK\n', f);
+    else
+        fprintf('%s ❌ 38=%d | 35=%d | 37=%d\n', f, n38, n35, n37);
     end
-
-    % print eerste 10 voor controle
-    if k <= 10
-        fprintf('Trial %d → %s\n', k, newType);
-    end
-
-    EEG.event(idx(k)).type = newType;
 
 end
 
-EEG = eeg_checkset(EEG);
+fprintf('\nKlaar! %d errors.\n', error_count);
 
-% --- opslaan testbestand ---
-SaveName = strrep(fileName, '.set', '_EmoNeu.set');
-
-EEG = pop_saveset(EEG, ...
-    'filename', SaveName, ...
-    'filepath', filePath);
-
-fprintf('\nTestbestand opgeslagen: %s\n', SaveName);
+% TEST voor 1 bestand – volledige pipeline
+% 
+% fileName = 'eFRT_encoding_316-sham_PreprocEEG_recoded.set';
+% filePath = path2EEGsets;
+% 
+% % --- laad EEG ---
+% EEG = pop_loadset('filename', fileName, 'filepath', filePath);
+% srate = EEG.srate;
+% 
+% % --- laad Excel ---
+% trialinfo_all = readtable('Opgeschoonde BP data.xlsx');
+% 
+% % --- subject ID ---
+% tokens = regexp(fileName, '_(\d+)-', 'tokens');
+% subID = str2double(tokens{1}{1});
+% fprintf('Subject ID: %d\n', subID);
+% 
+% trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
+% 
+% % INITIËLE TELLING
+% 
+% types = string({EEG.event.type});
+% latencies = [EEG.event.latency];
+% 
+% n38 = sum(types == "64538");
+% n35 = sum(types == "64535");
+% n37 = sum(types == "64537");
+% 
+% fprintf('Voor: 38=%d | 35=%d | 37=%d\n', n38, n35, n37);
+% 
+% % EVENTS AANVULLEN (ROBUST)
+% 
+% idx38 = find(types == "64538");
+% 
+% tol = 20; % tolerantie in samples
+% 
+% for i = 1:length(idx38)
+% 
+%     lat38 = latencies(idx38(i));
+%     lat35 = lat38 + 0.5 * srate;
+%     lat37 = lat35 + 0.8 * srate;
+% 
+%     % --- voeg 64535 toe indien nodig ---
+%     if n35 < 20
+%         if ~any(abs(latencies - lat35) < tol)
+%             EEG.event(end+1).type = '64535';
+%             EEG.event(end).latency = lat35;
+% 
+%             latencies(end+1) = lat35;
+%             n35 = n35 + 1;
+% 
+%             fprintf('Toegevoegd 64535 (nu %d)\n', n35);
+%         end
+%     end
+% 
+%     % --- voeg 64537 toe indien nodig ---
+%     if n37 < 20
+%         if ~any(abs(latencies - lat37) < tol)
+%             EEG.event(end+1).type = '64537';
+%             EEG.event(end).latency = lat37;
+% 
+%             latencies(end+1) = lat37;
+%             n37 = n37 + 1;
+% 
+%             fprintf('Toegevoegd 64537 (nu %d)\n', n37);
+%         end
+%     end
+% 
+% end
+% 
+% % --- sorteer events ---
+% [~, order] = sort([EEG.event.latency]);
+% EEG.event = EEG.event(order);
+% 
+% % DUPLICATEN VERWIJDEREN (64535)
+% 
+% types = {EEG.event.type};
+% latencies = [EEG.event.latency];
+% 
+% is64535 = strcmp(types, '64535');
+% idx_all = find(is64535);
+% lat_64535 = latencies(idx_all);
+% 
+% tol_dup = 2;
+% keep = true(size(lat_64535));
+% 
+% for i = 2:length(lat_64535)
+%     if abs(lat_64535(i) - lat_64535(i-1)) <= tol_dup
+%         keep(i) = false;
+%     end
+% end
+% 
+% EEG.event(idx_all(~keep)) = [];
+% 
+% % EMO / NEU SPLIT
+% 
+% idx = find(strcmp({EEG.event.type}, '64535'));
+% 
+% fprintf('Na fix: 64535 events = %d | trials = %d\n', length(idx), height(trialinfo));
+% 
+% if length(idx) ~= height(trialinfo)
+%     error('Mismatch na aanvullen!');
+% end
+% 
+% for k = 1:length(idx)
+% 
+%     cond = trialinfo.Trialtype_Emotion{k};
+% 
+%     if strcmpi(cond, 'Emo')
+%         EEG.event(idx(k)).type = "64535_emo";
+%     else
+%         EEG.event(idx(k)).type = "64535_neu";
+%     end
+% 
+%     if k <= 10
+%         fprintf('Trial %d → %s\n', k, EEG.event(idx(k)).type);
+%     end
+% end
+% 
+% EEG = eeg_checkset(EEG);
+% 
+% % EINDCHECK
+% 
+% types = string({EEG.event.type});
+% 
+% n38 = sum(types == "64538");
+% n35 = sum(contains(types, "64535"));
+% n37 = sum(types == "64537");
+% 
+% fprintf('\nNa alles: 38=%d | 35=%d | 37=%d\n', n38, n35, n37);
+% 
+% if n38==20 && n35==20 && n37==20
+%     fprintf('✅ Alles correct!\n');
+% else
+%     fprintf('❌ NIET correct!\n');
+% end
+% 
+% %  OPSLAAN
+% 
+% SaveName = strrep(fileName, '.set', '_TEST_final.set');
+% 
+% EEG = pop_saveset(EEG, ...
+%     'filename', SaveName, ...
+%     'filepath', filePath);
+% 
+% fprintf('\nTestbestand opgeslagen: %s\n', SaveName);
 %% Trim the data
 
 
