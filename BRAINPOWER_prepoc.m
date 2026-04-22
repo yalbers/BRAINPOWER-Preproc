@@ -96,7 +96,7 @@ file_type = {rec1, rec2, rec3, rec4};
 
 %% Preprocessing step 1: re-reference, downsample, filter, VEOG/HEOG
 
-% % Which task (file type) you want to analyze?
+% Which task (file type) you want to analyze?
 % fileno = 2;
 % 
 % % ~~~~ VOOR 1 DATASET (voorbeeld): ~~~~~ 
@@ -113,7 +113,7 @@ file_type = {rec1, rec2, rec3, rec4};
 % EEG.setname  = name_of_set;
 % EEG.subject  = subjectID_n1;
 % EEG.session  = session_n1;
-% 
+
 % % -- Remove non-recorded channels: F3 F4 (tACS electrode locations) and EXG7 EXG8
 % EEG = pop_select(EEG, 'nochannel', {'F3', 'F4', 'EXG7', 'EXG8'});
 % 
@@ -513,6 +513,72 @@ else
 end
 %% Trim the data
 
+files = dir(fullfile(path2EEGsets, '*_FINAL.set'));
+
+for fi = 1:length(files)
+
+    try
+        fileName = files(fi).name;
+        fprintf('\nTrimming: %s\n', fileName);
+
+        EEG = pop_loadset('filename', fileName, 'filepath', files(fi).folder);
+
+        EEG = eeg_checkset(EEG, 'eventconsistency');
+
+        eventTypes = {EEG.event.type};
+
+        % --- START: eerste 64538 ---
+        start_idx = find(strcmp(eventTypes, '64538'), 1, 'first');
+
+        if isempty(start_idx)
+            error('Geen 64538 start events gevonden');
+        end
+
+        start_time = EEG.event(start_idx).latency / EEG.srate;
+
+        % --- END: laatste 64537 ---
+        end_idx = find(strcmp(eventTypes, '64537'), 1, 'last');
+
+        if isempty(end_idx)
+            error('Geen 64537 events gevonden');
+        end
+
+        end_time = EEG.event(end_idx).latency / EEG.srate;
+
+        % --- buffers ---
+        pre_buffer  = 1.5;
+        post_buffer = 2;
+
+        % --- trim ---
+        EEG = pop_select(EEG, 'time', ...
+            [start_time - pre_buffer, end_time + post_buffer]);
+
+        EEG = eeg_checkset(EEG);
+
+        fprintf('Trim window: %.2f → %.2f sec\n', ...
+            start_time - pre_buffer, end_time + post_buffer);
+
+        % --- SAVE ---
+        SaveName = strrep(fileName, '_FINAL.set', '_TRIM.set');
+
+        EEG = pop_saveset(EEG, ...
+            'filename', SaveName, ...
+            'filepath', files(fi).folder);
+
+        fprintf('Saved: %s\n', SaveName);
+
+        clear EEG
+
+    catch ME
+        fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
+
+        if exist('EEG','var')
+            clear EEG
+        end
+
+        continue;
+    end
+end
 
 %% ICA
 
