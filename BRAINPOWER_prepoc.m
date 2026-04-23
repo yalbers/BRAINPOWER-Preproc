@@ -97,22 +97,22 @@ file_type = {rec1, rec2, rec3, rec4};
 %% Preprocessing step 1: re-reference, downsample, filter, VEOG/HEOG
 
 % Which task (file type) you want to analyze?
-% fileno = 2;
-% 
-% % ~~~~ VOOR 1 DATASET (voorbeeld): ~~~~~ 
-% subjectID_n1 = 775;
-% session_n1   = 2;
-% name_of_set  = sprintf('%s%i-%i.bdf', file_type{fileno}, subjectID_n1, session_n1);
-% fileName     = fullfile(path2data, name_of_set);
-% 
-% % -- Load raw bdf data file via EEGlab
-% EEG = pop_biosig( fileName ); % REQUIRES BIOSIG EXTENSION
-% 
-% % -- Enter data to the EEG structure
-% EEG.filename = fileName;
-% EEG.setname  = name_of_set;
-% EEG.subject  = subjectID_n1;
-% EEG.session  = session_n1;
+fileno = 2;
+
+% ~~~~ VOOR 1 DATASET (voorbeeld): ~~~~~ 
+subjectID_n1 = 775;
+session_n1   = 2;
+name_of_set  = sprintf('%s%i-%i.bdf', file_type{fileno}, subjectID_n1, session_n1);
+fileName     = fullfile(path2data, name_of_set);
+
+% -- Load raw bdf data file via EEGlab
+EEG = pop_biosig( fileName ); % REQUIRES BIOSIG EXTENSION
+
+% -- Enter data to the EEG structure
+EEG.filename = fileName;
+EEG.setname  = name_of_set;
+EEG.subject  = subjectID_n1;
+EEG.session  = session_n1;
 
 % % -- Remove non-recorded channels: F3 F4 (tACS electrode locations) and EXG7 EXG8
 % EEG = pop_select(EEG, 'nochannel', {'F3', 'F4', 'EXG7', 'EXG8'});
@@ -500,6 +500,8 @@ for fi = 1:length(files)
     end
 end
 
+% final summary
+
 fprintf('\n===== FINAL QC SUMMARY =====\n');
 
 if isempty(qc_issues)
@@ -527,7 +529,7 @@ for fi = 1:length(files)
 
         eventTypes = {EEG.event.type};
 
-        % --- START: eerste 64538 ---
+        % START: eerste 64538
         start_idx = find(strcmp(eventTypes, '64538'), 1, 'first');
 
         if isempty(start_idx)
@@ -536,7 +538,7 @@ for fi = 1:length(files)
 
         start_time = EEG.event(start_idx).latency / EEG.srate;
 
-        % --- END: laatste 64537 ---
+        % END: laatste 64537
         end_idx = find(strcmp(eventTypes, '64537'), 1, 'last');
 
         if isempty(end_idx)
@@ -545,11 +547,11 @@ for fi = 1:length(files)
 
         end_time = EEG.event(end_idx).latency / EEG.srate;
 
-        % --- buffers ---
+        % buffers
         pre_buffer  = 1.5;
         post_buffer = 2;
 
-        % --- trim ---
+        % trim
         EEG = pop_select(EEG, 'time', ...
             [start_time - pre_buffer, end_time + post_buffer]);
 
@@ -558,7 +560,7 @@ for fi = 1:length(files)
         fprintf('Trim window: %.2f → %.2f sec\n', ...
             start_time - pre_buffer, end_time + post_buffer);
 
-        % --- SAVE ---
+        % SAVE
         SaveName = strrep(fileName, '_FINAL.set', '_TRIM.set');
 
         EEG = pop_saveset(EEG, ...
@@ -582,6 +584,63 @@ end
 
 %% ICA
 
+files = dir(fullfile(path2EEGsets, '*_TRIM.set'));
+
+error_files = {};
+error_messages = {};
+
+for fi = 1:length(files)
+
+    try
+        fprintf('\n****\nLoad file %s\n****\n\n', files(fi).name);
+
+        fileName = files(fi).name;
+
+        % Load EEG set
+        EEG = pop_loadset('filename', fileName, 'filepath', path2EEGsets);
+
+        % Find Eyeblink components with ICA (runica):
+        EEG = pop_runica(EEG, 'icatype', 'runica', 'extended',1,'interrupt','on');
+
+        % Save
+        fprintf('\n****\nSave ICA data %s\n****\n\n', fileName);
+
+        SaveName = strrep(fileName, '_TRIM.set', '_ICA.set');
+
+        EEG = pop_saveset(EEG, 'filename', SaveName, 'filepath', path2EEGsets);
+
+        clear EEG
+        ALLEEG(1:end) = [];
+
+    catch ME
+
+        fprintf('\nERROR in %s:\n%s\n', files(fi).name, ME.message);
+
+        error_files{end+1} = files(fi).name;
+        error_messages{end+1} = ME.message;
+
+        if exist('EEG','var')
+            clear EEG
+        end
+
+        continue;
+    end
+
+end
+
+% ===== ERROR SUMMARY =====
+
+fprintf('\n===== ICA ERROR SUMMARY =====\n');
+
+if isempty(error_files)
+    fprintf('No errors encountered ✅\n');
+else
+    fprintf('Errors in %d files:\n\n', length(error_files));
+
+    for i = 1:length(error_files)
+        fprintf('%s --> %s\n', error_files{i}, error_messages{i});
+    end
+end
 
 %% Epoch the data
 
