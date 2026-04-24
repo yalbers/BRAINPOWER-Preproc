@@ -644,5 +644,64 @@ end
 
 %% Epoch the data
 
+files = dir(fullfile(path2EEGsets, '*_ICA_eyeblink.set'));
+
+error_files = {};
+error_messages = {};
+
+for fi = 1:length(files)
+
+    try
+        fileName = files(fi).name;
+
+        fprintf('\n****\nEpoching: %s\n****\n', fileName);
+
+        % load
+        EEG = pop_loadset('filename', fileName, 'filepath', path2EEGsets);
+
+        % epoch rond 64535 
+        EEG = pop_epoch(EEG, {'64535_emo','64535_neu'}, [-0.5 2], 'epochinfo', 'yes');
+
+        % baseline correctie 
+        EEG = pop_rmbase(EEG, [-200 0]);
+
+        EEG = eeg_checkset(EEG);
+
+        % SAVE 
+        SaveName = strrep(fileName, '_ICA.set', '_EPOCH.set');
+
+        EEG = pop_saveset(EEG, 'filename', SaveName, 'filepath', path2EEGsets);
+
+        fprintf('Saved: %s\n', SaveName);
+
+        clear EEG
+        ALLEEG(1:end) = [];
+
+    catch ME
+
+        fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
+
+        error_files{end+1} = fileName;
+        error_messages{end+1} = ME.message;
+
+        if exist('EEG','var'); clear EEG; end
+
+        continue;
+    end
+end
+
+% ===== ERROR SUMMARY =====
+
+fprintf('\n===== EPOCH ERROR SUMMARY =====\n');
+
+if isempty(error_files)
+    fprintf('No errors encountered ✅\n');
+else
+    fprintf('Errors in %d files:\n\n', length(error_files));
+
+    for i = 1:length(error_files)
+        fprintf('%s --> %s\n', error_files{i}, error_messages{i});
+    end
+end
 
 %% Artifact rejection
