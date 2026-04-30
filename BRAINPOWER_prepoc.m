@@ -174,6 +174,9 @@ EEG.session  = session_n1;
 error_count = 0;
 error_files = {};
 
+% Which task (file type) you want to analyze?
+fileno = 2;
+
 % Loop over files
 for subj_i = 1:length(subj_list)
     for sess_i = 1:length(sessions)
@@ -266,6 +269,9 @@ for subj_i = 1:length(subj_list)
 end
 
 %% PIPELINE: recode → clean → fix 64535 → fix 64537 → split emo/neu + QC
+
+% Which task (file type) you want to analyze?
+fileno = 2;
 
 files = dir(fullfile(path2EEGsets, '*sham*.set'));
 
@@ -515,6 +521,9 @@ else
 end
 %% Trim the data
 
+% Which task (file type) you want to analyze?
+fileno = 2;
+
 files = dir(fullfile(path2EEGsets, '*_FINAL.set'));
 
 for fi = 1:length(files)
@@ -584,6 +593,9 @@ end
 
 %% ICA
 
+% Which task (file type) you want to analyze?
+fileno = 2;
+
 files = dir(fullfile(path2EEGsets, '*_TRIM.set'));
 
 error_files = {};
@@ -644,6 +656,9 @@ end
 
 %% Epoch the data
 
+% Which task (file type) you want to analyze?
+fileno = 2;
+
 files = dir(fullfile(path2EEGsets, '*_ICA_eyeblink.set'));
 
 error_files = {};
@@ -668,7 +683,7 @@ for fi = 1:length(files)
         EEG = eeg_checkset(EEG);
 
         % SAVE 
-        SaveName = strrep(fileName, '_ICA.set', '_EPOCH.set');
+        SaveName = regexprep(fileName, '_ICA.*\.set$', '_EPOCH.set');
 
         EEG = pop_saveset(EEG, 'filename', SaveName, 'filepath', path2EEGsets);
 
@@ -705,3 +720,133 @@ else
 end
 
 %% Artifact rejection
+
+% ===== ARTIFACT REJECTION + ADVANCED LOGGING =====
+
+files = dir(fullfile(Path2EEGsets, '*_EPOCH.set'));
+
+% ===== logging =====
+log_file   = {};
+log_total  = [];
+log_reject = [];
+log_percent = [];
+
+log_emo = [];
+log_neu = [];
+
+log_amp = [];
+
+log_chan_rej = [];
+
+for fi = 1:length(files)
+
+    fileName = files(fi).name;
+    fprintf('\nProcessing: %s\n', fileName);
+
+    EEG = pop_loadset('filename', fileName, 'filepath', Path2EEGsets);
+
+    % ===== PARAMETERS =====
+    grad_thresh = 50;
+    amp_thresh  = 100;
+    diff_thresh = 150;
+    win_ms      = 200;
+
+    winpnts = round(win_ms/(1000/EEG.srate));
+
+    EEG.reject.rejmanual  = zeros(1, EEG.trials);
+    EEG.reject.rejmanualE = zeros(EEG.nbchan, EEG.trials);
+
+    % ===== LOOP =====
+    for ch = 1:EEG.nbchan-2
+
+        for tr = 1:EEG.trials
+
+            data = EEG.data(ch,:,tr);
+
+            gradient = max(abs(diff(data)));
+            ampliMax = max(data);
+            ampliMin = min(data);
+
+            win_diff = [];
+            for w = 1:winpnts:length(data)-winpnts
+                seg = data(w:w+winpnts-1);
+                win_diff(end+1) = max(seg) - min(seg);
+            end
+            diffV = max(win_diff);
+
+            if gradient > grad_thresh || ...
+               ampliMax > amp_thresh || ...
+               ampliMin < -amp_thresh || ...
+               diffV > diff_thresh
+
+                EEG.reject.rejmanual(tr) = 1;
+                EEG.reject.rejmanualE(ch,tr) = 1;
+            end
+        end
+    end
+
+    % ===== VISUAL CHECK =====
+    fprintf('Marked trials: %d\n', sum(EEG.reject.rejmanual));
+    pop_eegplot(EEG, 1, 1, 0);
+    input('Press enter to continue...','s');
+
+    bad_trials = find(EEG.reject.rejmanual);
+
+    % ===== BASIC LOGGING =====
+    total_trials = EEG.trials;
+    rejected     = length(bad_trials);
+    percent      = (rejected / total_trials) * 100;
+
+    log_file{end+1}   = fileName;
+    log_total(end+1)  = total_trials;
+    log_reject(end+1) = rejected;
+    log_percent(end+1)= percent;
+
+    % ===== CONDITION LOGGING =====
+    event_types = {EEG.event.type};
+
+    emo_trials = sum(strcmp(event_types, '64535_emo'));
+    neu_trials = sum(strcmp(event_types, '64535_neu'));
+
+    log_emo(end+1) = emo_trials;
+    log_neu(end+1) = neu_trials;
+
+    % ===== MEAN AMPLITUDE =====
+    mean_amp = mean(abs(EEG.data(:)));
+    log_amp(end+1) = mean_amp;
+
+    % ===== CHANNEL REJECTION RATE =====
+    chan_rej_rate = sum(EEG.reject.rejmanualE,2) / EEG.trials;
+    log_chan_rej = [log_chan_rej; chan_rej_rate'];
+
+    % ===== REJECT =====
+    EEG = pop_rejepoch(EEG, bad_trials, 1);
+    EEG = eeg_checkset(EEG);
+
+    % ===== SAVE CLEAN FILE =====
+    SaveName = regexprep(fileName, '_EPOCH\.set$', '_CLEAN.set');
+
+    EEG = pop_saveset(EEG, ...
+        'filename', SaveName, ...
+        'filepath', Path2EEGsets);
+
+    fprintf('Saved: %s\n', SaveName);
+
+    clear EEG
+    close all
+end
+
+% ===== SAVE OVERVIEW =====
+
+T = table(log_file', log_total', log_reject', log_percent', ...
+          log_emo', log_neu', log_amp', ...
+    'VariableNames', {'File','TotalTrials','RejectedTrials','PercentRejected','EmoTrials','NeuTrials','MeanAmplitude'});
+
+writetable(T, fullfile(Path2EEGsets, 'ArtifactRejection_Overview.csv'));
+
+% ===== SAVE CHANNEL STATS =====
+writematrix(log_chan_rej, fullfile(Path2EEGsets, 'Channel_Rejection_Rates.csv'));
+
+fprintf('\nOverview saved:\n');
+fprintf('- ArtifactRejection_Overview.csv\n');
+fprintf('- Channel_Rejection_Rates.csv\n');
