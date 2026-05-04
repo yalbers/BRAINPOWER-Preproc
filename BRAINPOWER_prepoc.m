@@ -485,7 +485,7 @@ for fi = 1:length(files)
                 fileName, strjoin(issues, ' | '));
         end
 
-        % SAVE
+        % Save
 
         SaveName = strrep(fileName, '.set', '_FINAL.set');
 
@@ -506,7 +506,7 @@ for fi = 1:length(files)
     end
 end
 
-% final summary
+% Final summary
 
 fprintf('\n===== FINAL QC SUMMARY =====\n');
 
@@ -569,7 +569,7 @@ for fi = 1:length(files)
         fprintf('Trim window: %.2f → %.2f sec\n', ...
             start_time - pre_buffer, end_time + post_buffer);
 
-        % SAVE
+        % Save
         SaveName = strrep(fileName, '_FINAL.set', '_TRIM.set');
 
         EEG = pop_saveset(EEG, ...
@@ -640,7 +640,7 @@ for fi = 1:length(files)
 
 end
 
-% ===== ERROR SUMMARY =====
+% Error summary
 
 fprintf('\n===== ICA ERROR SUMMARY =====\n');
 
@@ -682,7 +682,7 @@ for fi = 1:length(files)
 
         EEG = eeg_checkset(EEG);
 
-        % SAVE 
+        % Save 
         SaveName = regexprep(fileName, '_ICA.*\.set$', '_EPOCH.set');
 
         EEG = pop_saveset(EEG, 'filename', SaveName, 'filepath', path2EEGsets);
@@ -705,7 +705,7 @@ for fi = 1:length(files)
     end
 end
 
-% ===== ERROR SUMMARY =====
+% Error summary
 
 fprintf('\n===== EPOCH ERROR SUMMARY =====\n');
 
@@ -719,13 +719,13 @@ else
     end
 end
 
-%% Artifact rejection
+%% Artifact rejection 
 
-% ===== ARTIFACT REJECTION + ADVANCED LOGGING =====
+fileno = 2;
 
-files = dir(fullfile(Path2EEGsets, '*_EPOCH.set'));
+files = dir(fullfile(path2EEGsets, '*_EPOCH.set'));
 
-% ===== logging =====
+% logging
 log_file   = {};
 log_total  = [];
 log_reject = [];
@@ -733,9 +733,7 @@ log_percent = [];
 
 log_emo = [];
 log_neu = [];
-
 log_amp = [];
-
 log_chan_rej = [];
 
 for fi = 1:length(files)
@@ -743,12 +741,60 @@ for fi = 1:length(files)
     fileName = files(fi).name;
     fprintf('\nProcessing: %s\n', fileName);
 
-    EEG = pop_loadset('filename', fileName, 'filepath', Path2EEGsets);
+    EEG = pop_loadset('filename', fileName, 'filepath', path2EEGsets);
 
-    % ===== PARAMETERS =====
-    grad_thresh = 50;
-    amp_thresh  = 100;
-    diff_thresh = 150;
+    % Noisy channel detection
+
+    pop_eegplot(EEG, 1, 1, 1);
+
+    data_2d = reshape(EEG.data, EEG.nbchan, []);
+
+    n_use = min(30, EEG.nbchan-2);
+
+    chansd = std(data_2d(1:n_use, :)');
+    sortsd = sort(chansd);
+
+    badsd = find(chansd > 4 * mean(sortsd(1:15)));
+    badsdchans = {EEG.chanlocs(badsd).labels};
+
+    if isempty(badsdchans)
+        fprintf('No channels >4SD deviation\n');
+        badchannels = {'0'};
+        noisychannels = [];
+    else
+        fprintf('Channel(s) >4SD deviation: %s\n', strjoin(badsdchans, ', '));
+    end
+
+    % manual confirmation
+    m3a = "no";
+    while m3a ~= "yes"
+        m3a = input('Ready to input channels to leave out? Type [yes] ','s');
+    end
+
+    m3 = -1;
+    while m3 == -1
+        m3 = str2double(input('How many channels to leave out? ','s'));
+    end
+
+    badchannels = {};
+    noisychannels = [];
+
+    if m3 > 0
+        for bchni = 1:m3
+            badchannels{bchni} = input(['Which channel to leave out nr ' num2str(bchni) ': '],'s');
+            noisychannels(bchni) = find(strcmpi(badchannels{bchni}, {EEG.chanlocs.labels}));
+        end
+    else
+        badchannels = {'0'};
+    end
+
+    EEG.eventdescription = {{'Too much noise in channels:'}, badchannels};
+
+    % Artifact parameters
+
+    grad_thresh = 75;
+    amp_thresh  = 150;
+    diff_thresh = 100;
     win_ms      = 200;
 
     winpnts = round(win_ms/(1000/EEG.srate));
@@ -756,8 +802,20 @@ for fi = 1:length(files)
     EEG.reject.rejmanual  = zeros(1, EEG.trials);
     EEG.reject.rejmanualE = zeros(EEG.nbchan, EEG.trials);
 
-    % ===== LOOP =====
-    for ch = 1:EEG.nbchan-2
+    % Exclude noisy channels
+    chanarray = 1:EEG.nbchan-2;
+
+    if ~any(strcmpi(badchannels, '0'))
+        for i = 1:length(badchannels)
+            idx = find(strcmpi(badchannels{i}, {EEG.chanlocs.labels}));
+            chanarray(chanarray == idx) = [];
+        end
+    end
+
+    % Trial artifact rejection
+
+    for ci = 1:length(chanarray)
+        ch = chanarray(ci);
 
         for tr = 1:EEG.trials
 
@@ -785,50 +843,43 @@ for fi = 1:length(files)
         end
     end
 
-    % ===== VISUAL CHECK =====
+    % Visual check
     fprintf('Marked trials: %d\n', sum(EEG.reject.rejmanual));
     pop_eegplot(EEG, 1, 1, 0);
     input('Press enter to continue...','s');
 
     bad_trials = find(EEG.reject.rejmanual);
 
-    % ===== BASIC LOGGING =====
+    % Logging
     total_trials = EEG.trials;
     rejected     = length(bad_trials);
     percent      = (rejected / total_trials) * 100;
 
-    log_file{end+1}   = fileName;
-    log_total(end+1)  = total_trials;
-    log_reject(end+1) = rejected;
-    log_percent(end+1)= percent;
+    log_file{end+1}    = fileName;
+    log_total(end+1)   = total_trials;
+    log_reject(end+1)  = rejected;
+    log_percent(end+1) = percent;
 
-    % ===== CONDITION LOGGING =====
     event_types = {EEG.event.type};
 
-    emo_trials = sum(strcmp(event_types, '64535_emo'));
-    neu_trials = sum(strcmp(event_types, '64535_neu'));
+    log_emo(end+1) = sum(strcmp(event_types, '64535_emo'));
+    log_neu(end+1) = sum(strcmp(event_types, '64535_neu'));
 
-    log_emo(end+1) = emo_trials;
-    log_neu(end+1) = neu_trials;
+    log_amp(end+1) = mean(abs(EEG.data(:)));
 
-    % ===== MEAN AMPLITUDE =====
-    mean_amp = mean(abs(EEG.data(:)));
-    log_amp(end+1) = mean_amp;
-
-    % ===== CHANNEL REJECTION RATE =====
     chan_rej_rate = sum(EEG.reject.rejmanualE,2) / EEG.trials;
     log_chan_rej = [log_chan_rej; chan_rej_rate'];
 
-    % ===== REJECT =====
+    % Reject epochs
     EEG = pop_rejepoch(EEG, bad_trials, 1);
     EEG = eeg_checkset(EEG);
 
-    % ===== SAVE CLEAN FILE =====
+    % Save file
     SaveName = regexprep(fileName, '_EPOCH\.set$', '_CLEAN.set');
 
     EEG = pop_saveset(EEG, ...
         'filename', SaveName, ...
-        'filepath', Path2EEGsets);
+        'filepath', path2EEGsets);
 
     fprintf('Saved: %s\n', SaveName);
 
@@ -836,16 +887,18 @@ for fi = 1:length(files)
     close all
 end
 
-% ===== SAVE OVERVIEW =====
+% Save overview
+
 
 T = table(log_file', log_total', log_reject', log_percent', ...
           log_emo', log_neu', log_amp', ...
     'VariableNames', {'File','TotalTrials','RejectedTrials','PercentRejected','EmoTrials','NeuTrials','MeanAmplitude'});
 
-writetable(T, fullfile(Path2EEGsets, 'ArtifactRejection_Overview.csv'));
+writetable(T, fullfile(path2EEGsets, 'ArtifactRejection_Overview.csv'), ...
+    'Delimiter',';');
 
-% ===== SAVE CHANNEL STATS =====
-writematrix(log_chan_rej, fullfile(Path2EEGsets, 'Channel_Rejection_Rates.csv'));
+writematrix(log_chan_rej, fullfile(path2EEGsets, 'Channel_Rejection_Rates.csv'), ...
+    'Delimiter', ',');
 
 fprintf('\nOverview saved:\n');
 fprintf('- ArtifactRejection_Overview.csv\n');
