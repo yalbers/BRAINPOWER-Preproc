@@ -719,11 +719,94 @@ else
     end
 end
 
+%% Split 64535_emo / 64535_neu into remembered / forgotten
+
+files = dir(fullfile(path2EEGsets, '*_EPOCH.set'));
+
+trialinfo_all = readtable('Opgeschoonde BP data.xlsx');
+
+for fi = 1:length(files)
+
+    try
+
+        fileName = files(fi).name;
+
+        fprintf('\nProcessing: %s\n', fileName);
+
+        EEG = pop_loadset('filename', fileName, 'filepath', files(fi).folder);
+
+        % --- subject ID uit bestandsnaam halen ---
+        tokens = regexp(fileName, '_(\d+)-', 'tokens');
+        subID = str2double(tokens{1}{1});
+
+        % --- filter trialinfo voor deze participant ---
+        trialinfo = trialinfo_all(trialinfo_all.SubjectID == subID, :);
+
+        % --- vind alle 64535 events ---
+        idx = find(strcmp({EEG.event.type}, '64535_emo') | ...
+                   strcmp({EEG.event.type}, '64535_neu'));
+
+        % --- check ---
+        if length(idx) ~= height(trialinfo)
+            error('Mismatch in aantal trials voor subject %d', subID);
+        end
+
+        % --- recode ---
+        for k = 1:length(idx)
+
+            retrieved = trialinfo.retrieved(k);
+
+            if strcmpi(EEG.event(idx(k)).type, '64535_emo')
+
+                if retrieved == 1
+                    EEG.event(idx(k)).type = "64535_emo_rem";
+                elseif retrieved == 0
+                    EEG.event(idx(k)).type = "64535_emo_for";
+                end
+
+            elseif strcmpi(EEG.event(idx(k)).type, '64535_neu')
+
+                if retrieved == 1
+                    EEG.event(idx(k)).type = "64535_neu_rem";
+                elseif retrieved == 0
+                    EEG.event(idx(k)).type = "64535_neu_for";
+                end
+
+            end
+
+        end
+
+        EEG = eeg_checkset(EEG);
+
+        % --- save ---
+        SaveName = strrep(fileName, '_EPOCH.set', '_remFor.set');
+
+        EEG = pop_saveset(EEG, ...
+            'filename', SaveName, ...
+            'filepath', files(fi).folder);
+
+        fprintf('Saved: %s\n', SaveName);
+
+        clear EEG
+
+    catch ME
+
+        fprintf('\nERROR in %s:\n%s\n', fileName, ME.message);
+
+        if exist('EEG','var')
+            clear EEG
+        end
+
+        continue;
+
+    end
+
+end
 %% Artifact rejection 
 
 fileno = 2;
 
-files = dir(fullfile(path2EEGsets, '*_EPOCH.set'));
+files = dir(fullfile(path2EEGsets, '*_remFor.set'));
 
 % logging
 log_file   = {};
@@ -792,9 +875,9 @@ for fi = 1:length(files)
 
     % Artifact parameters
 
-    grad_thresh = 75;
-    amp_thresh  = 150;
-    diff_thresh = 100;
+    grad_thresh = 50; % Maximaal verschil tussen twee opeenvolgende datapunten
+    amp_thresh  = 100; % Absolute amplitude grens (+/- microV)
+    diff_thresh = 150; % Maximaal verloop binnen een schuiven venster van 200 ms
     win_ms      = 200;
 
     winpnts = round(win_ms/(1000/EEG.srate));
@@ -899,6 +982,247 @@ writetable(T, fullfile(path2EEGsets, 'ArtifactRejection_Overview.csv'), ...
 
 writematrix(log_chan_rej, fullfile(path2EEGsets, 'Channel_Rejection_Rates.csv'), ...
     'Delimiter', ',');
+
+fprintf('\nOverview saved:\n');
+fprintf('- ArtifactRejection_Overview.csv\n');
+fprintf('- Channel_Rejection_Rates.csv\n');
+
+%% Artifact rejection 2.0
+
+fileno = 2;
+
+files = dir(fullfile(path2EEGsets, '*_remFor.set'));
+
+% ===== logging =====
+
+log_file = {};
+
+log_total = [];
+log_reject = [];
+log_percent = [];
+
+log_emo_rem = [];
+log_emo_for = [];
+
+log_neu_rem = [];
+log_neu_for = [];
+
+log_amp = [];
+
+log_chan_rej = [];
+
+for fi = 1:length(files)
+
+    fileName = files(fi).name;
+
+    fprintf('\nProcessing: %s\n', fileName);
+
+    EEG = pop_loadset('filename', fileName,'filepath', path2EEGsets);
+
+    % NOISY CHANNEL DETECTION
+
+    pop_eegplot(EEG,1,1,1);
+
+    data_2d = reshape(EEG.data, EEG.nbchan, []);
+
+    n_use = min(30, EEG.nbchan-2);
+
+    chansd = std(data_2d(1:n_use,:)');
+    sortsd = sort(chansd);
+
+    badsd = find(chansd > 4 * mean(sortsd(1:15)));
+
+    badsdchans = {EEG.chanlocs(badsd).labels};
+
+    if isempty(badsdchans)
+
+        fprintf('No channels >4SD deviation\n');
+
+        badchannels = {'0'};
+        noisychannels = [];
+
+    else
+
+        fprintf('Channel(s) >4SD deviation: %s\n', strjoin(badsdchans, ', '));
+
+    end
+
+    % Manual confirmation
+
+    m3a = "no";
+
+    while m3a ~= "yes"
+        m3a = input( ...
+            'Ready to input channels to leave out? Type [yes] ','s');
+    end
+
+    m3 = -1;
+
+    while m3 == -1
+        m3 = str2double( ...
+            input('How many channels to leave out? ','s'));
+    end
+
+    badchannels = {};
+    noisychannels = [];
+
+    if m3 > 0
+
+        for bchni = 1:m3
+
+            badchannels{bchni} = ...
+                input(['Which channel to leave out nr ' num2str(bchni) ': '],'s');
+
+            noisychannels(bchni) = ...
+                find(strcmpi(badchannels{bchni}, {EEG.chanlocs.labels}));
+
+        end
+
+    else
+
+        badchannels = {'0'};
+
+    end
+
+    EEG.eventdescription = {{'Too much noise in channels:'}, badchannels};
+
+    % ARTIFACT PARAMETERS
+
+    grad_thresh = 50;
+    amp_thresh  = 100;
+    diff_thresh = 150;
+    win_ms      = 200;
+
+    winpnts = round(win_ms/(1000/EEG.srate));
+
+    EEG.reject.rejmanual = zeros(1, EEG.trials);
+    EEG.reject.rejmanualE = zeros(EEG.nbchan, EEG.trials);
+
+    % Exclude noisy channels
+
+    chanarray = 1:(EEG.nbchan-2);
+
+    if ~any(strcmpi(badchannels,'0'))
+
+        for i = 1:length(badchannels)
+
+            idx = find(strcmpi(badchannels{i}, {EEG.chanlocs.labels}));
+
+            chanarray(chanarray == idx) = [];
+
+        end
+
+    end
+
+    % TRIAL ARTIFACT REJECTION
+
+    for ci = 1:length(chanarray)
+
+        ch = chanarray(ci);
+
+        for tr = 1:EEG.trials
+
+            data = EEG.data(ch,:,tr);
+
+            gradient = max(abs(diff(data)));
+
+            ampliMax = max(data);
+            ampliMin = min(data);
+
+            win_diff = [];
+
+            for w = 1:winpnts:length(data)-winpnts
+
+                seg = data(w:w+winpnts-1);
+
+                win_diff(end+1) = max(seg) - min(seg);
+
+            end
+
+            diffV = max(win_diff);
+
+            if gradient > grad_thresh || ampliMax > amp_thresh || ampliMin < -amp_thresh || diffV > diff_thresh
+
+                EEG.reject.rejmanual(tr) = 1;
+                EEG.reject.rejmanualE(ch,tr) = 1;
+
+            end
+
+        end
+
+    end
+
+    % VISUAL CHECK
+
+    fprintf('Marked trials: %d\n', sum(EEG.reject.rejmanual));
+
+    pop_eegplot(EEG,1,1,0);
+
+    input('Press enter to continue...','s');
+
+    bad_trials = find(EEG.reject.rejmanual);
+
+    % LOGGING BEFORE REJECTION
+
+    total_trials = EEG.trials;
+
+    rejected = length(bad_trials);
+
+    percent = (rejected / total_trials) * 100;
+
+    log_file{end+1} = fileName;
+
+    log_total(end+1) = total_trials;
+
+    log_reject(end+1) = rejected;
+
+    log_percent(end+1) = percent;
+
+    log_amp(end+1) = mean(abs(EEG.data(:)));
+
+    chan_rej_rate = sum(EEG.reject.rejmanualE,2) / EEG.trials;
+
+    log_chan_rej = [log_chan_rej ; chan_rej_rate'];
+
+    % REJECT EPOCHS
+
+    EEG = pop_rejepoch(EEG, bad_trials, 1);
+
+    EEG = eeg_checkset(EEG);
+
+    % COUNTS AFTER REJECTION
+
+    event_types_after = {EEG.event.type};
+
+    log_emo_rem(end+1) = sum(strcmp(event_types_after,'64535_emo_rem'));
+
+    log_emo_for(end+1) = sum(strcmp(event_types_after,'64535_emo_for'));
+
+    log_neu_rem(end+1) = sum(strcmp(event_types_after,'64535_neu_rem'));
+
+    log_neu_for(end+1) = sum(strcmp(event_types_after,'64535_neu_for'));
+
+    % SAVE FILE
+
+    SaveName = regexprep(fileName, '_remFor\.set$','_CLEAN.set');
+
+    EEG = pop_saveset(EEG,'filename', SaveName,'filepath', path2EEGsets);
+
+    fprintf('Saved: %s\n', SaveName);
+
+    clear EEG
+    close all
+
+end
+
+% SAVE OVERVIEW
+
+T = table(log_file', log_total', log_reject', log_percent', log_emo_rem', log_emo_for', log_neu_rem', log_neu_for', log_amp', 'VariableNames', ...
+    {'File', 'TotalTrials', 'RejectedTrials', 'PercentRejected', 'Emo_Rem', 'Emo_For', 'Neu_Rem', 'Neu_For', 'MeanAmplitude'});
+
+writetable(T, fullfile(path2EEGsets, 'ArtifactRejection_Overview.csv'), 'Delimiter',';');
+
+writematrix( log_chan_rej, fullfile(path2EEGsets, 'Channel_Rejection_Rates.csv'), 'Delimiter', ',');
 
 fprintf('\nOverview saved:\n');
 fprintf('- ArtifactRejection_Overview.csv\n');
